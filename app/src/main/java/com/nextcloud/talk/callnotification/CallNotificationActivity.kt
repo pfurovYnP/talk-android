@@ -61,6 +61,7 @@ class CallNotificationActivity : CallBaseActivity() {
     private var isOneToOneCall: Boolean = true
     private var conversationName: String? = null
     private var internalUserId: Long = -1
+    private var answerFromNotification: Boolean = false
 
     private var userBeingCalled: User? = null
     private var leavingScreen = false
@@ -81,6 +82,7 @@ class CallNotificationActivity : CallBaseActivity() {
         binding!!.conversationNameTextView.text = displayName
         setupAvatar(isOneToOneCall, conversationName)
         initClickListeners()
+        maybeAutoAnswerFromNotification()
         setupNotificationCanceledRoutine()
     }
 
@@ -93,6 +95,7 @@ class CallNotificationActivity : CallBaseActivity() {
         isOneToOneCall = extras.getBoolean(KEY_ROOM_ONE_TO_ONE)
         conversationName = extras.getString(BundleKeys.KEY_CONVERSATION_NAME, "")
         internalUserId = extras.getLong(BundleKeys.KEY_INTERNAL_USER_ID)
+        answerFromNotification = extras.containsKey(KEY_CALL_VOICE_ONLY)
     }
 
     private fun setupAvatar(isOneToOneCall: Boolean, conversationName: String?) {
@@ -194,6 +197,13 @@ class CallNotificationActivity : CallBaseActivity() {
         intent.putExtra(KEY_ROOM_ONE_TO_ONE, isOneToOneCall)
         callIntent.putExtras(intent.extras!!)
         startActivity(callIntent)
+    }
+
+    private fun maybeAutoAnswerFromNotification() {
+        if (!answerFromNotification) {
+            return
+        }
+        proceedToCall()
     }
 
     private fun isInCallWithVideo(callFlag: Int): Boolean = (callFlag and Participant.InCallFlags.WITH_VIDEO) > 0
