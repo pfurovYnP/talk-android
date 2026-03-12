@@ -59,6 +59,7 @@ import com.nextcloud.talk.models.json.push.DecryptedPushMessage
 import com.nextcloud.talk.models.json.push.NotificationUser
 import com.nextcloud.talk.receivers.DirectReplyReceiver
 import com.nextcloud.talk.receivers.DismissRecordingAvailableReceiver
+import com.nextcloud.talk.receivers.IncomingCallDeclineReceiver
 import com.nextcloud.talk.receivers.MarkAsReadReceiver
 import com.nextcloud.talk.receivers.ShareRecordingToChatReceiver
 import com.nextcloud.talk.users.UserManager
@@ -76,6 +77,7 @@ import com.nextcloud.talk.utils.bundle.BundleKeys
 import com.nextcloud.talk.utils.bundle.BundleKeys.KEY_DISMISS_RECORDING_URL
 import com.nextcloud.talk.utils.bundle.BundleKeys.KEY_FROM_NOTIFICATION_START_CALL
 import com.nextcloud.talk.utils.bundle.BundleKeys.KEY_INTERNAL_USER_ID
+import com.nextcloud.talk.utils.bundle.BundleKeys.KEY_CALL_VOICE_ONLY
 import com.nextcloud.talk.utils.bundle.BundleKeys.KEY_MESSAGE_ID
 import com.nextcloud.talk.utils.bundle.BundleKeys.KEY_NOTIFICATION_ID
 import com.nextcloud.talk.utils.bundle.BundleKeys.KEY_NOTIFICATION_RESTRICT_DELETION
@@ -261,28 +263,73 @@ class NotificationWorker(context: Context, workerParams: WorkerParameters) : Wor
                 }
             )
 
+            val answerIntent = Intent(context, CallNotificationActivity::class.java).apply {
+                putExtras(bundle)
+                putExtra(KEY_CALL_VOICE_ONLY, !isInCallWithVideo(conversation.callFlag))
+                flags = getIntentFlags()
+            }
+            val answerPendingIntent = PendingIntent.getActivity(
+                context,
+                requestCode + 1,
+                answerIntent,
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                } else {
+                    PendingIntent.FLAG_UPDATE_CURRENT
+                }
+            )
+
+            val declineIntent = Intent(context, IncomingCallDeclineReceiver::class.java).apply {
+                putExtra(KEY_NOTIFICATION_TIMESTAMP, pushMessage.timestamp.toInt())
+            }
+            val declinePendingIntent = PendingIntent.getBroadcast(
+                context,
+                requestCode + 2,
+                declineIntent,
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                } else {
+                    PendingIntent.FLAG_UPDATE_CURRENT
+                }
+            )
+
             val soundUri = getCallRingtoneUri(applicationContext, appPreferences)
             val notificationChannelId = NotificationUtils.NotificationChannels.NOTIFICATION_CHANNEL_CALLS_V4.name
             val uri = signatureVerification.user!!.baseUrl!!.toUri()
             val baseUrl = uri.host
 
-            val notification =
-                NotificationCompat.Builder(applicationContext, notificationChannelId)
-                    .setPriority(NotificationCompat.PRIORITY_HIGH)
-                    .setCategory(NotificationCompat.CATEGORY_CALL)
-                    .setSmallIcon(R.drawable.ic_call_black_24dp)
-                    .setSubText(baseUrl)
-                    .setShowWhen(true)
-                    .setWhen(pushMessage.timestamp)
-                    .setContentTitle(EmojiCompat.get().process(pushMessage.subject))
-                    // auto cancel is set to false because notification (including sound) should continue while
-                    // CallNotificationActivity is active
-                    .setAutoCancel(false)
-                    .setOngoing(true)
-                    .setContentIntent(fullScreenPendingIntent)
-                    .setFullScreenIntent(fullScreenPendingIntent, true)
-                    .setSound(soundUri)
-                    .build()
+            val caller = Person.Builder()
+                .setName(EmojiCompat.get().process(pushMessage.subject))
+                .setImportant(true)
+                .build()
+
+            val builder = NotificationCompat.Builder(applicationContext, notificationChannelId)
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setCategory(NotificationCompat.CATEGORY_CALL)
+                .setSmallIcon(R.drawable.ic_call_black_24dp)
+                .setSubText(baseUrl)
+                .setShowWhen(true)
+                .setWhen(pushMessage.timestamp)
+                .setContentTitle(EmojiCompat.get().process(pushMessage.subject))
+                // auto cancel is set to false because notification (including sound) should continue while
+                // CallNotificationActivity is active
+                .setAutoCancel(false)
+                .setOngoing(true)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setContentIntent(fullScreenPendingIntent)
+                .setFullScreenIntent(fullScreenPendingIntent, true)
+                .setSound(soundUri)
+                .setColorized(true)
+
+            builder.setStyle(
+                NotificationCompat.CallStyle.forIncomingCall(
+                    caller,
+                    declinePendingIntent,
+                    answerPendingIntent
+                )
+            )
+
+            val notification = builder.build()
             notification.flags = notification.flags or Notification.FLAG_INSISTENT
 
             sendNotification(pushMessage.timestamp.toInt(), notification)
